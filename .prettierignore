@@ -1,0 +1,4 @@
+# .prettierignore
+/.medusa
+/.integration-test
+/node_modules
