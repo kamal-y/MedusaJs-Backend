@@ -1,70 +1,187 @@
-<p align="center">
-  <a href="https://www.medusajs.com">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://user-images.githubusercontent.com/59018053/229103275-b5e482bb-4601-46e6-8142-244f531cebdb.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://user-images.githubusercontent.com/59018053/229103726-e5b529a3-9b3f-4970-8a1f-c6af37f087bf.svg">
-    <img alt="Medusa logo" src="https://user-images.githubusercontent.com/59018053/229103726-e5b529a3-9b3f-4970-8a1f-c6af37f087bf.svg">
-    </picture>
-  </a>
-</p>
-<h1 align="center">
-  Medusa
-</h1>
+# Medusa Project with Directus Integration
 
-<h4 align="center">
-  <a href="https://docs.medusajs.com">Documentation</a> |
-  <a href="https://www.medusajs.com">Website</a>
-</h4>
+This project demonstrates an integration of Medusa with Directus using Medusa's event-based system and Directus's API. The goal is to synchronize product data between Medusa and Directus, while avoiding infinite synchronization loops.
 
-<p align="center">
-  Building blocks for digital commerce
-</p>
-<p align="center">
-  <a href="https://github.com/medusajs/medusa/blob/master/CONTRIBUTING.md">
-    <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat" alt="PRs welcome!" />
-  </a>
-    <a href="https://www.producthunt.com/posts/medusa"><img src="https://img.shields.io/badge/Product%20Hunt-%231%20Product%20of%20the%20Day-%23DA552E" alt="Product Hunt"></a>
-  <a href="https://discord.gg/xpCwq3Kfn8">
-    <img src="https://img.shields.io/badge/chat-on%20discord-7289DA.svg" alt="Discord Chat" />
-  </a>
-  <a href="https://twitter.com/intent/follow?screen_name=medusajs">
-    <img src="https://img.shields.io/twitter/follow/medusajs.svg?label=Follow%20@medusajs" alt="Follow @medusajs" />
-  </a>
-</p>
+## Project Setup
 
-## Compatibility
+### Prerequisites
+- Node.js (>=20)
+- PostgreSQL Database
+- Redis
+- Directus Instance
+- Medusa CLI
 
-This starter is compatible with versions >= 1.8.0 of `@medusajs/medusa`. 
+### Installation
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd <repository-directory>
+   ```
 
-## Getting Started
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-Visit the [Quickstart Guide](https://docs.medusajs.com/learn) to set up a server.
+3. Set up environment variables in a `.env` file:
+   ```env
+   MEDUSA_ADMIN_ONBOARDING_TYPE=default
+   STORE_CORS=http://localhost:8000,https://docs.medusajs.com
+   ADMIN_CORS=http://localhost:5173,http://localhost:9000,https://docs.medusajs.com
+   AUTH_CORS=http://localhost:5173,http://localhost:9000,http://localhost:8000,https://docs.medusajs.com
+   REDIS_URL=redis://localhost:6379
+   JWT_SECRET=supersecret
+   COOKIE_SECRET=supersecret
+   DATABASE_URL=postgresql://neondb_owner:password@your-neon-database-url:5432/database-name?sslmode=require
+   CMS_API_KEY=your_directus_api_key
+   CMS_BASE_URL=https://your-directus-instance-url
+   NEXT_PUBLIC_DIRECTUS_URL=http://localhost:8055
+   MEDUSA_SECRET_API=your_medusa_secret_api
+   ```
 
-Visit the [Docs](https://docs.medusajs.com/learn#get-started) to learn more about our system requirements.
+4. Seed the database:
+   ```bash
+   npm run seed
+   ```
 
-## What is Medusa
+5. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-Medusa is a set of commerce modules and tools that allow you to build rich, reliable, and performant commerce applications without reinventing core commerce logic. The modules can be customized and used to build advanced ecommerce stores, marketplaces, or any product that needs foundational commerce primitives. All modules are open-source and freely available on npm.
+## Event-Subscriber Logic for Synchronization
 
-Learn more about [Medusa’s architecture](https://docs.medusajs.com/learn/advanced-development/architecture/overview) and [commerce modules](https://docs.medusajs.com/learn/basics/commerce-modules) in the Docs.
+### Overview
+Medusa utilizes an event-subscriber system to listen for events (e.g., product creation, update, deletion) and synchronizes data with Directus. This integration ensures bi-directional data sync while managing infinite loop scenarios.
 
-## Roadmap, Upgrades & Plugins
+### Logic to Handle Infinite Loop
+The infinite loop is managed using metadata that tracks the source of the last synchronization and its timestamp.
 
-You can view the planned, started and completed features in the [Roadmap discussion](https://github.com/medusajs/medusa/discussions/categories/roadmap).
+#### Metadata Example
+```typescript
+export interface SyncMetadata {
+  lastSyncedAt: string;
+  syncSource: 'directus' | 'medusa';
+  syncId: string;
+}
+```
 
-Follow the [Upgrade Guides](https://docs.medusajs.com/upgrade-guides/) to keep your Medusa project up-to-date.
+#### Metadata Generation
+```typescript
+const generateSyncMetadata = (): SyncMetadata => ({
+  lastSyncedAt: new Date().toISOString(),
+  syncSource: 'medusa',
+  syncId: Math.random().toString(36).substring(7),
+});
+```
 
-Check out all [available Medusa plugins](https://medusajs.com/plugins/).
+#### External Sync Validation
+```typescript
+const isExternalSync = (product: any): boolean => {
+  const metadata = product?.metadata;
+  if (!metadata?.lastSyncedAt) return false;
 
-## Community & Contributions
+  const timeDiff = Date.now() - new Date(metadata.lastSyncedAt).getTime();
+  logger.info(`[Medusa] Time since last sync: ${timeDiff}ms`);
 
-The community and core team are available in [GitHub Discussions](https://github.com/medusajs/medusa/discussions), where you can ask for support, discuss roadmap, and share ideas.
+  return metadata.syncSource === 'directus' && timeDiff < SYNC_THRESHOLD;
+};
+```
 
-Join our [Discord server](https://discord.com/invite/medusajs) to meet other community members.
+### Event Handler
+The following events are handled:
+- `product.created`
+- `product.updated`
+- `product.deleted`
 
-## Other channels
+#### Example Code
+```typescript
+export default async function productEventHandler({
+  event: { data, name },
+  container,
+}: SubscriberArgs<any>) {
+  const logger = container.resolve('logger');
 
-- [GitHub Issues](https://github.com/medusajs/medusa/issues)
-- [Twitter](https://twitter.com/medusajs)
-- [LinkedIn](https://www.linkedin.com/company/medusajs)
-- [Medusa Blog](https://medusajs.com/blog/)
+  try {
+    switch (name) {
+      case 'product.created': {
+        const createdProduct = await MedusaSdk.admin.product.retrieve(data.id);
+        if (isExternalSync(createdProduct.product)) return;
+
+        const syncMetadata = generateSyncMetadata();
+        const productData = {
+          ...mapProductData(createdProduct.product),
+          metadata: syncMetadata,
+          medusa_reference_id: data.id,
+        };
+
+        await directusService.createProduct(productData);
+        logger.info(`[Medusa] Product synced to Directus: ${data.id}`);
+        break;
+      }
+      case 'product.updated': {
+        const updatedProduct = await MedusaSdk.admin.product.retrieve(data.id);
+        if (isExternalSync(updatedProduct.product)) return;
+
+        const syncMetadata = generateSyncMetadata();
+        const productData = {
+          ...mapProductData(updatedProduct.product),
+          metadata: syncMetadata,
+        };
+
+        await directusService.updateProduct(data.id, productData);
+        logger.info(`[Medusa] Product updated in Directus: ${data.id}`);
+        break;
+      }
+      case 'product.deleted': {
+        if (isExternalSync(data)) return;
+
+        await directusService.deleteProduct(data.id);
+        logger.info(`[Medusa] Product deleted from Directus: ${data.id}`);
+        break;
+      }
+      default:
+        logger.warn(`[Medusa] Unhandled event: ${name}`);
+    }
+  } catch (error) {
+    logger.error(`[Medusa] Error handling event ${name}:`, error);
+  }
+}
+```
+
+### Configuration
+The subscriber is configured as follows:
+```typescript
+export const config: SubscriberConfig = {
+  event: ['product.created', 'product.updated', 'product.deleted'],
+  context: {
+    subscriberId: 'directus-sync-subscriber',
+  },
+};
+```
+
+## Directus Integration
+Directus API is utilized for the following operations:
+- `createProduct`
+- `updateProduct`
+- `deleteProduct`
+
+Ensure that the Directus instance is properly configured and accessible using the API key specified in the `.env` file.
+
+## Scripts
+- **Start Development Server**: `npm run dev`
+- **Seed Database**: `npm run seed`
+- **Build Project**: `npm run build`
+
+## Dependencies
+- `@medusajs/medusa`
+- `@directus/sdk`
+- `@medusajs/framework`
+- `pg`
+- `redis`
+
+## Additional Notes
+- Make sure that the Directus instance and Medusa server are running simultaneously.
+- Update the environment variables according to your setup.
+
+Feel free to reach out for any queries or issues!
